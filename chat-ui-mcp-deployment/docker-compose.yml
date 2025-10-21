@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  # MongoDB for chat-ui
+  mongodb:
+    image: mongo:7
+    container_name: chat-ui-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: chat-ui
+    networks:
+      - chat-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Filesystem MCP Server (Streamable HTTP)
+  filesystem-server:
+    build:
+      context: ./mcp-servers/filesystem
+      dockerfile: Dockerfile
+    container_name: mcp-filesystem-server
+    restart: unless-stopped
+    environment:
+      ALLOWED_DIRECTORIES: /workspace
+      PORT: 8000
+      LOG_LEVEL: INFO
+    volumes:
+      - ./workspace:/workspace:rw
+    networks:
+      - chat-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # LiteLLM Proxy with MCP Gateway
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-mcp-gateway
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    env_file:
+      - .env
+    command: --config /app/config.yaml --port 4000
+    networks:
+      - chat-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      filesystem-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # chat-ui (Hugging Face)
+  chat-ui:
+    image: ghcr.io/huggingface/chat-ui:latest
+    container_name: chat-ui-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Point to LiteLLM Proxy
+      OPENAI_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+
+      # MongoDB
+      MONGODB_URL: mongodb://mongodb:27017
+      MONGODB_DB_NAME: chat-ui
+
+      # App Configuration
+      PUBLIC_APP_NAME: "ChatUI with MCP"
+      PUBLIC_APP_DESCRIPTION: "AI Chat with Tool Calling via Model Context Protocol"
+      PUBLIC_APP_ASSETS: chatui
+
+      # Features
+      LLM_SUMMARIZATION: true
+      ENABLE_DATA_EXPORT: true
+    networks:
+      - chat-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+networks:
+  chat-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:

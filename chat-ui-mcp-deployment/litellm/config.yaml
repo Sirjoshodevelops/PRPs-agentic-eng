@@ -1,0 +1,46 @@
+model_list:
+  # HuggingFace Router (recommended - free with HF token)
+  - model_name: llama-3-70b
+    litellm_params:
+      model: openai/meta-llama/Llama-3.3-70B-Instruct
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
+
+  # OpenAI (if you have API key)
+  - model_name: gpt-4
+    litellm_params:
+      model: gpt-4
+      api_key: os.environ/OPENAI_API_KEY
+
+general_settings:
+  # Master key for LiteLLM authentication
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  # Enable MCP Gateway
+  enable_mcp: true
+
+  # Tool execution settings
+  mcp_tool_timeout: 30000  # 30 seconds
+  max_parallel_tools: 5
+
+  # MCP Servers (Streamable HTTP - Production)
+  mcp_servers:
+    # Filesystem Server (Streamable HTTP)
+    - name: filesystem
+      type: streamable-http
+      url: http://filesystem-server:8000/mcp
+      timeout: 30000
+      init_timeout: 10000
+
+      # Security: Tool whitelisting
+      allowed_tools:
+        - list_directory
+        - read_file
+        - write_file
+
+      # Server instructions
+      server_instructions: |
+        Use filesystem tools to read/write files in allowed directories.
+        Always validate paths before operations.
+        Current allowed directory: /workspace
